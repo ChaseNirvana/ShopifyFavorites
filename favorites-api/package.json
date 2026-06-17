@@ -1,0 +1,9 @@
+{
+  "name": "favorites-api",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Shopify customer favorites metafield toggle",
+  "engines": {
+    "node": ">=18"
+  }
+}
