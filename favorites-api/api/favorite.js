@@ -1,54 +1,20 @@
 // api/favorite.js
-// Toggles a product in the logged-in customer's "custom.favorites" metafield.
-// Uses Shopify's Client Credentials Grant (Dev Dashboard app) to get a short-lived
-// access token, cached in memory and refreshed before it expires.
+// Toggles a product in the logged-in customer's "custom.favorite_recipes" metafield.
+// Uses a permanent offline Admin API token (from the authorization code grant).
 
-const SHOP = process.env.SHOP_DOMAIN;            // cookingwithloveclub.myshopify.com
-const CLIENT_ID = process.env.SHOPIFY_CLIENT_ID; // from Dev Dashboard -> Settings
-const CLIENT_SECRET = process.env.SHOPIFY_CLIENT_SECRET;
+const SHOP = process.env.SHOP_DOMAIN;          // cwlc-2.myshopify.com
+const TOKEN = process.env.ADMIN_API_TOKEN;     // shpca_... token
 const ALLOWED_ORIGIN = process.env.STORE_ORIGIN; // https://www.cookingwithloveclub.com
 const API_VERSION = '2025-01';
-
-// --- token cache (persists while the serverless instance stays warm) ---
-let cachedToken = null;
-let tokenExpiresAt = 0; // epoch ms
-
-async function getAccessToken() {
-  // Reuse cached token if it has >60s of life left
-  if (cachedToken && Date.now() < tokenExpiresAt - 60000) {
-    return cachedToken;
-  }
-
-  const res = await fetch(`https://${SHOP}/admin/oauth/access_token`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
-      'Accept': 'application/json',
-    },
-    body: new URLSearchParams({
-      client_id: CLIENT_ID,
-      client_secret: CLIENT_SECRET,
-      grant_type: 'client_credentials',
-    }),
-  });
-
-  if (!res.ok) {
-    throw new Error(`Token request failed: ${res.status} ${await res.text()}`);
-  }
-
-  const data = await res.json();
-  cachedToken = data.access_token;
-  tokenExpiresAt = Date.now() + (data.expires_in || 86399) * 1000;
-  return cachedToken;
-}
+const MF_NAMESPACE = 'custom';
+const MF_KEY = 'favorite_recipes';
 
 async function gql(query, variables) {
-  const token = await getAccessToken();
   const res = await fetch(`https://${SHOP}/admin/api/${API_VERSION}/graphql.json`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'X-Shopify-Access-Token': token,
+      'X-Shopify-Access-Token': TOKEN,
     },
     body: JSON.stringify({ query, variables }),
   });
@@ -77,7 +43,7 @@ export default async function handler(req, res) {
     const read = await gql(
       `query($id: ID!) {
         customer(id: $id) {
-          metafield(namespace: "custom", key: "favorites") { value }
+          metafield(namespace: "${MF_NAMESPACE}", key: "${MF_KEY}") { value }
         }
       }`,
       { id: customerGid }
@@ -109,8 +75,8 @@ export default async function handler(req, res) {
       {
         metafields: [{
           ownerId: customerGid,
-          namespace: 'custom',
-          key: 'favorites',
+          namespace: MF_NAMESPACE,
+          key: MF_KEY,
           type: 'list.product_reference',
           value: JSON.stringify(favs),
         }],
