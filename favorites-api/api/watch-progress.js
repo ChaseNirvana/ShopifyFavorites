@@ -9,10 +9,10 @@
  * Admin GraphQL API (which is why the write has to happen server-side — the
  * storefront cannot write customer metafields).
  *
- * Required environment variables (set in the Vercel project):
- *   SHOPIFY_STORE         e.g. your-store.myshopify.com
- *   SHOPIFY_ADMIN_TOKEN   Admin API access token with read/write_customers
- *   ALLOWED_ORIGIN        your storefront origin, e.g. https://www.cookingwithloveclub.com
+ * Environment variables (reuses the names already set on the favorites project):
+ *   SHOP_DOMAIN      e.g. your-store.myshopify.com
+ *   ADMIN_API_TOKEN  Admin API access token with read/write_customers
+ *   STORE_ORIGIN     your storefront origin, e.g. https://www.cookingwithloveclub.com
  *
  * Request (POST, JSON):
  *   { "customerId": "1234567890", "handle": "lemon-chicken", "pct": 45, "sec": 312 }
@@ -25,14 +25,16 @@
 const API_VERSION = '2024-10';
 const MAX_ENTRIES = 60; // keep the metafield small; drop oldest beyond this
 
-const ADMIN_GRAPHQL = `https://${process.env.SHOPIFY_STORE}/admin/api/${API_VERSION}/graphql.json`;
-
 async function shopifyGraphQL(query, variables) {
-  const res = await fetch(ADMIN_GRAPHQL, {
+  // Built per-request (after the env guard) so a missing store domain can't
+  // silently produce "https://undefined/...".
+  const store = process.env.SHOP_DOMAIN;
+  const adminGraphql = `https://${store}/admin/api/${API_VERSION}/graphql.json`;
+  const res = await fetch(adminGraphql, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'X-Shopify-Access-Token': process.env.SHOPIFY_ADMIN_TOKEN,
+      'X-Shopify-Access-Token': process.env.ADMIN_API_TOKEN,
     },
     body: JSON.stringify({ query, variables }),
   });
@@ -43,12 +45,21 @@ async function shopifyGraphQL(query, variables) {
 
 module.exports = async function handler(req, res) {
   // CORS
-  res.setHeader('Access-Control-Allow-Origin', process.env.ALLOWED_ORIGIN || '*');
+  res.setHeader('Access-Control-Allow-Origin', process.env.STORE_ORIGIN || '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
   if (req.method === 'OPTIONS') return res.status(204).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+
+  // Fail loudly + clearly if the environment isn't configured.
+  const missing = ['SHOP_DOMAIN', 'ADMIN_API_TOKEN'].filter((k) => !process.env[k]);
+  if (missing.length) {
+    return res.status(500).json({ error: 'Missing env vars', missing });
+  }
+  if (typeof fetch !== 'function') {
+    return res.status(500).json({ error: 'global fetch is undefined — set the Vercel project to Node 18+' });
+  }
 
   try {
     const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : req.body || {};
@@ -118,6 +129,8 @@ module.exports = async function handler(req, res) {
     return res.status(200).json({ ok: true });
   } catch (err) {
     console.error('watch-progress error:', err);
-    return res.status(500).json({ error: 'Server error' });
+    // Surface the message to the browser to speed up debugging.
+    // Once it's working you can drop `detail` if you'd rather not expose it.
+    return res.status(500).json({ error: 'Server error', detail: String(err && err.message || err) });
   }
 };
